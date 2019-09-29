@@ -16,6 +16,7 @@
 package com.google.firebase.udacity.friendlychat;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 
 import androidx.annotation.NonNull;
@@ -38,6 +39,10 @@ import android.widget.Toast;
 import com.firebase.ui.auth.AuthUI;
 import com.firebase.ui.auth.ErrorCodes;
 import com.firebase.ui.auth.IdpResponse;
+import com.google.android.gms.tasks.Continuation;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -46,6 +51,9 @@ import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -71,6 +79,9 @@ public class MainActivity extends AppCompatActivity {
     private FirebaseAuth mFirebaseAuth;
     private FirebaseAuth.AuthStateListener mAuthStateListener;
     private static final int RC_SIGN_IN = 12345;
+    private static final int RC_PHOTO_PICKER = 12346;
+    private FirebaseStorage mFirebaseStorage;
+    private StorageReference mStorageReference;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,8 +92,10 @@ public class MainActivity extends AppCompatActivity {
 
         mFirebaseDatabase = FirebaseDatabase.getInstance();
         mFirebaseAuth = FirebaseAuth.getInstance();
+        mFirebaseStorage = FirebaseStorage.getInstance();
 
         mDatabaseReference = mFirebaseDatabase.getReference().child("messages");
+        mStorageReference = mFirebaseStorage.getReference().child("chat_photos");
 
         // Initialize references to views
         mProgressBar = (ProgressBar) findViewById(R.id.progressBar);
@@ -104,6 +117,13 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View view) {
                 // TODO: Fire an intent to show an image picker
+
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.setType("image/jpeg");
+                intent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+                startActivityForResult(Intent
+                        .createChooser(intent, "Complete action using"), RC_PHOTO_PICKER);
+
             }
         });
 
@@ -214,11 +234,52 @@ public class MainActivity extends AppCompatActivity {
             if( resultCode == RESULT_OK ){
                 Toast.makeText(MainActivity.this, "Signed in", Toast.LENGTH_SHORT)
                         .show();
-            }else{
+            }else if ( resultCode == RESULT_CANCELED ){
                 Toast.makeText(MainActivity.this,
                         "SignIn cancelled", Toast.LENGTH_SHORT).show();
                 finish();
             }
+        } else if ( requestCode == RC_PHOTO_PICKER && resultCode == RESULT_OK){
+            Uri imageSelected = data.getData();
+
+            final StorageReference photoReference =
+                    mStorageReference.child(imageSelected.getLastPathSegment());
+
+            UploadTask uploadTask = photoReference.putFile( imageSelected );
+
+            Task<Uri> urlTask = uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
+                @Override
+                public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
+                    if (!task.isSuccessful()) {
+                        throw task.getException();
+                    }
+
+                    // Continue with the task to get the download URL
+                    return photoReference.getDownloadUrl();
+                }
+            }).addOnCompleteListener(new OnCompleteListener<Uri>() {
+                @Override
+                public void onComplete(@NonNull Task<Uri> task) {
+
+                    if (task.isSuccessful()) {
+                        Uri downloadUri = task.getResult();
+
+                        Toast.makeText(MainActivity.this,
+                                "Successfully uploaded", Toast.LENGTH_SHORT).show();
+                        if (downloadUri != null) {
+
+                            String photoStringLink = downloadUri.toString();
+
+                            FriendlyMessage friendlyMessage =
+                                    new FriendlyMessage(null, mUsername, photoStringLink);
+
+                            mDatabaseReference.push().setValue(friendlyMessage);
+                        }
+
+                    }
+
+                }
+            });
         }
     }
 
